@@ -4,7 +4,7 @@ import cats.data.Ior
 import cats.implicits._
 import cats.kernel.{Monoid, Semigroup}
 import com.google.protobuf.ByteString
-import com.wavesplatform.account.{Address, AddressOrAlias, Alias, PublicKey}
+import com.wavesplatform.account.{Address, Alias, PublicKey}
 import com.wavesplatform.common.state.ByteStr
 import com.wavesplatform.features.BlockchainFeatures
 import com.wavesplatform.lang.script.Script
@@ -13,7 +13,6 @@ import com.wavesplatform.state.diffs.FeeValidation
 import com.wavesplatform.state.reader.LeaseDetails
 import com.wavesplatform.transaction.ApplicationStatus.Succeeded
 import com.wavesplatform.transaction.Asset.IssuedAsset
-import com.wavesplatform.transaction.lease.LeaseTransaction
 import com.wavesplatform.transaction.{ApplicationStatus, Asset, Transaction}
 import play.api.libs.json._
 
@@ -146,8 +145,6 @@ case class NewTransactionInfo(transaction: Transaction, affected: Set[Address], 
 
 case class NewAssetInfo(static: AssetStaticInfo, dynamic: AssetInfo, volume: AssetVolumeInfo)
 
-case class LeaseActionInfo(invokeId: ByteStr, dAppPublicKey: PublicKey, recipient: AddressOrAlias, amount: Long)
-
 sealed trait ContinuationState
 object ContinuationState {
   case class InProgress(
@@ -159,7 +156,6 @@ object ContinuationState {
   case object Finished extends ContinuationState
 }
 
-
 case class Diff(
     transactions: collection.Map[ByteStr, NewTransactionInfo],
     portfolios: Map[Address, Portfolio],
@@ -167,7 +163,7 @@ case class Diff(
     updatedAssets: Map[IssuedAsset, Ior[AssetInfo, AssetVolumeInfo]],
     aliases: Map[Alias, Address],
     orderFills: Map[ByteStr, VolumeAndFee],
-    leaseState: Map[ByteStr, (Boolean, Option[LeaseActionInfo])],
+    leaseState: Map[ByteStr, LeaseDetails],
     scripts: Map[Address, Option[AccountScriptInfo]],
     assetScripts: Map[IssuedAsset, Option[AssetScriptInfo]],
     accountData: Map[Address, AccountDataInfo],
@@ -183,20 +179,6 @@ case class Diff(
 
   def addContinuationState(address: Address, state: ContinuationState): Diff =
     copy(continuationStates = continuationStates + ((address, state)))
-
-  def leaseDetails(leaseId: ByteStr, height: Int): Option[LeaseDetails] =
-    leaseState.get(leaseId).flatMap {
-      case (isActive, None) =>
-        transactions.get(leaseId).collect {
-          case NewTransactionInfo(lt: LeaseTransaction, _, ApplicationStatus.Succeeded) =>
-            LeaseDetails(lt.sender, lt.recipient, height, lt.amount, isActive)
-        }
-      case (isActive, Some(LeaseActionInfo(invokeId, dAppPublicKey, recipient, amount))) =>
-        transactions.get(invokeId).collect {
-          case NewTransactionInfo(_, _, ApplicationStatus.Succeeded) =>
-            LeaseDetails(dAppPublicKey, recipient, height, amount, isActive)
-        }
-    }
 }
 
 object Diff {
@@ -206,7 +188,7 @@ object Diff {
       updatedAssets: Map[IssuedAsset, Ior[AssetInfo, AssetVolumeInfo]] = Map.empty,
       aliases: Map[Alias, Address] = Map.empty,
       orderFills: Map[ByteStr, VolumeAndFee] = Map.empty,
-      leaseState: Map[ByteStr, (Boolean, Option[LeaseActionInfo])] = Map.empty,
+      leaseState: Map[ByteStr, LeaseDetails] = Map.empty,
       scripts: Map[Address, Option[AccountScriptInfo]] = Map.empty,
       assetScripts: Map[IssuedAsset, Option[AssetScriptInfo]] = Map.empty,
       accountData: Map[Address, AccountDataInfo] = Map.empty,
@@ -242,7 +224,7 @@ object Diff {
       updatedAssets: Map[IssuedAsset, Ior[AssetInfo, AssetVolumeInfo]] = Map.empty,
       aliases: Map[Alias, Address] = Map.empty,
       orderFills: Map[ByteStr, VolumeAndFee] = Map.empty,
-      leaseState: Map[ByteStr, (Boolean, Option[LeaseActionInfo])] = Map.empty,
+      leaseState: Map[ByteStr, LeaseDetails] = Map.empty,
       scripts: Map[Address, Option[AccountScriptInfo]] = Map.empty,
       assetScripts: Map[IssuedAsset, Option[AssetScriptInfo]] = Map.empty,
       accountData: Map[Address, AccountDataInfo] = Map.empty,
