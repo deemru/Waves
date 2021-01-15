@@ -1135,13 +1135,4 @@ abstract class LevelDBWriter private[database] (
 
     txs.toList
   }
-
-  def continuationTransactionIds(invokeId: ByteStr): Seq[ByteStr] =
-    readOnly(
-      db =>
-        for {
-          (height, num)     <- db.get(Keys.continuationTransactionsHeightsAndNums(TransactionId(invokeId)))
-          (continuation, _) <- db.get(Keys.transactionAt(height, num))
-        } yield continuation.id.value()
-    )
 }
