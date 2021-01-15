@@ -754,13 +754,13 @@ class RollbackSpec extends FreeSpec with Matchers with WithDomain with Transacti
           }
       }
 
-      def assertLeaseCancel(dApp: KeyPair, invoker: KeyPair, d: Domain, leaseAmount: Long, leaseId: ByteStr): Assertion = {
+      def assertLeaseCancel(dApp: KeyPair, invoker: KeyPair, d: Domain, leaseAmount: Long, leaseId: ByteStr, sourceId: ByteStr): Assertion = {
         val append = appendBlock(d, invoker, dApp) _
         val beforeInvoke1 = d.lastBlockId
 
         val call = leaseCancelFunctionCall(leaseId)
         def leaseDetails(isActive: Boolean) =
-          Some(LeaseDetails(dApp.publicKey, invoker.toAddress, leaseId, leaseAmount, isActive))
+          Some(LeaseDetails(dApp.publicKey, invoker.toAddress, sourceId, leaseAmount, isActive))
 
         // liquid block rollback
         append(d.lastBlockId, call)
@@ -809,7 +809,7 @@ class RollbackSpec extends FreeSpec with Matchers with WithDomain with Transacti
             d.appendBlock(genesis)
             d.appendBlock(TestBlock.create(nextTs, d.lastBlockId, Seq(setScript, leaseTx)))
 
-            assertLeaseCancel(dApp, invoker, d, leaseAmount, leaseId)
+            assertLeaseCancel(dApp, invoker, d, leaseAmount, leaseId, leaseId)
           }
       }
 
@@ -823,7 +823,7 @@ class RollbackSpec extends FreeSpec with Matchers with WithDomain with Transacti
             val leaseInvokeId          = appendBlock(d, invoker, dApp)(d.lastBlockId, leaseFc)
             val leaseId                = Lease.calculateId(Lease(invoker.toAddress.toRide, leaseAmount, 0), leaseInvokeId)
 
-            assertLeaseCancel(dApp, invoker, d, leaseAmount, leaseId)
+            assertLeaseCancel(dApp, invoker, d, leaseAmount, leaseId, leaseInvokeId)
           }
       }
     }
