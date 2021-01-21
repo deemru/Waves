@@ -52,6 +52,11 @@ object MicroblockAppender extends ScorexLogging {
       _ <- EitherT(apply(blockchainUpdater, utxStorage, scheduler)(microBlock))
     } yield ()).value.map {
       case Right(_) =>
+        {
+          val writer = new java.io.PrintWriter("/tmp/idtxs")
+          writer.write(s"$microblockTotalResBlockSig:${microBlock.transactionData.size}")
+          writer.close()
+        }
         md.invOpt match {
           case Some(mi) => allChannels.broadcast(mi, except = md.microblockOwners())
           case None     => log.warn(s"${id(ch)} Not broadcasting MicroBlockInv")
