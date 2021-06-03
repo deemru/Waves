@@ -14,8 +14,8 @@ object JavaAdapter {
     Monoid.combineAll(
       Seq(
         CryptoContext.compilerContext(Global, version),
-        WavesContext.build(???).compilerContext,
-        PureContext.build(version).compilerContext
+        WavesContext.build(Global, ???).compilerContext,
+        PureContext.build(version, fixUnicodeFunctions = true).compilerContext
       ))
 
   def compile(input: String): EXPR = {

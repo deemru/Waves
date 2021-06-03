@@ -13,7 +13,7 @@ import com.wavesplatform.lang.directives.DirectiveSet
 import com.wavesplatform.lang.directives.values.{DApp => DAppType, _}
 import com.wavesplatform.lang.v1.FunctionHeader.{Native, User}
 import com.wavesplatform.lang.v1.compiler.Terms._
-import com.wavesplatform.lang.v1.compiler.{CompilerContext, Terms}
+import com.wavesplatform.lang.v1.compiler.{CompilerContext, Terms, TestCompiler}
 import com.wavesplatform.lang.v1.estimator.v3.ScriptEstimatorV3
 import com.wavesplatform.lang.v1.evaluator.FunctionIds
 import com.wavesplatform.lang.v1.evaluator.ctx.impl.waves.{FieldNames, Types, WavesContext}
@@ -29,32 +29,39 @@ import org.scalatestplus.scalacheck.{ScalaCheckPropertyChecks => PropertyChecks}
 
 class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers with ScriptGen with NoShrink {
   private val dAppV3Ctx: CompilerContext =
-    Monoid.combineAll(
-      Seq(
-        PureContext.build(V3).withEnvironment[Environment],
-        CryptoContext.build(com.wavesplatform.lang.Global, V3).withEnvironment[Environment],
-        WavesContext.build(
-          DirectiveSet(V3, Account, DAppType).explicitGet()
+    Monoid
+      .combineAll(
+        Seq(
+          PureContext.build(V3, fixUnicodeFunctions = true).withEnvironment[Environment],
+          CryptoContext.build(com.wavesplatform.lang.Global, V3).withEnvironment[Environment],
+          WavesContext.build(
+            Global,
+            DirectiveSet(V3, Account, DAppType).explicitGet()
+          )
         )
       )
-    ).compilerContext
+      .compilerContext
 
   private val dAppV4Ctx: CompilerContext =
-    Monoid.combineAll(
-      Seq(
-        PureContext.build(V4).withEnvironment[Environment],
-        CryptoContext.build(com.wavesplatform.lang.Global, V4).withEnvironment[Environment],
-        WavesContext.build(
-          DirectiveSet(V4, Account, DAppType).explicitGet()
+    Monoid
+      .combineAll(
+        Seq(
+          PureContext.build(V4, fixUnicodeFunctions = true).withEnvironment[Environment],
+          CryptoContext.build(com.wavesplatform.lang.Global, V4).withEnvironment[Environment],
+          WavesContext.build(
+            Global,
+            DirectiveSet(V4, Account, DAppType).explicitGet()
+          )
         )
       )
-    )
-    .compilerContext
+      .compilerContext
 
   property("contract compiles when uses annotation bindings and correct return type") {
     val ctx = Monoid.combine(
       compilerContext,
-      WavesContext.build(
+      WavesContext
+        .build(
+          Global,
           DirectiveSet(V3, Account, DAppType).explicitGet()
         )
         .compilerContext
@@ -104,13 +111,18 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
                 LET("sender0", GETTER(GETTER(REF("invocation"), "caller"), "bytes")),
                 FUNCTION_CALL(
                   User(FieldNames.WriteSet),
-                  List(FUNCTION_CALL(
-                    Native(1100),
-                    List(
-                      FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), REF("a"))),
-                      FUNCTION_CALL(Native(1100), List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil")))
+                  List(
+                    FUNCTION_CALL(
+                      Native(1100),
+                      List(
+                        FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), REF("a"))),
+                        FUNCTION_CALL(
+                          Native(1100),
+                          List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil"))
+                        )
+                      )
                     )
-                  ))
+                  )
                 )
               )
             )
@@ -124,13 +136,18 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
                 LET("sender0", GETTER(GETTER(REF("invocation"), "caller"), "bytes")),
                 FUNCTION_CALL(
                   User(FieldNames.WriteSet),
-                  List(FUNCTION_CALL(
-                    Native(1100),
-                    List(
-                      FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), CONST_STRING("b").explicitGet())),
-                      FUNCTION_CALL(Native(1100), List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil")))
+                  List(
+                    FUNCTION_CALL(
+                      Native(1100),
+                      List(
+                        FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), CONST_STRING("b").explicitGet())),
+                        FUNCTION_CALL(
+                          Native(1100),
+                          List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil"))
+                        )
+                      )
                     )
-                  ))
+                  )
                 )
               )
             )
@@ -139,9 +156,15 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
         Some(
           VerifierFunction(
             VerifierAnnotation("t"),
-            FUNC("verify", List.empty, FUNCTION_CALL(Native(FunctionIds.EQ), List(GETTER(REF("t"), "id"), CONST_BYTESTR(ByteStr.empty).explicitGet())))
-          ))
-      ))
+            FUNC(
+              "verify",
+              List.empty,
+              FUNCTION_CALL(Native(FunctionIds.EQ), List(GETTER(REF("t"), "id"), CONST_BYTESTR(ByteStr.empty).explicitGet()))
+            )
+          )
+        )
+      )
+    )
     compiler.ContractCompiler(ctx, expr, V3) shouldBe expectedResult
   }
 
@@ -150,6 +173,7 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
       compilerContext,
       WavesContext
         .build(
+          Global,
           DirectiveSet(V3, Account, DAppType).explicitGet()
         )
         .compilerContext
@@ -185,20 +209,26 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
                 LET("sender0", GETTER(GETTER(REF("invocation"), "caller"), "bytes")),
                 FUNCTION_CALL(
                   User(FieldNames.WriteSet),
-                  List(FUNCTION_CALL(
-                    Native(1100),
-                    List(
-                      FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), CONST_STRING("b").explicitGet())),
-                      FUNCTION_CALL(Native(1100), List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil")))
+                  List(
+                    FUNCTION_CALL(
+                      Native(1100),
+                      List(
+                        FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("a").explicitGet(), CONST_STRING("b").explicitGet())),
+                        FUNCTION_CALL(
+                          Native(1100),
+                          List(FUNCTION_CALL(User("DataEntry"), List(CONST_STRING("sender").explicitGet(), REF("sender0"))), REF("nil"))
+                        )
+                      )
                     )
-                  ))
+                  )
                 )
               )
             )
           )
         ),
         None
-      ))
+      )
+    )
     compiler.ContractCompiler(ctx, expr, V3) shouldBe expectedResult
   }
 
@@ -353,12 +383,14 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
     val ctx = Monoid
       .combineAll(
         Seq(
-          PureContext.build(V3).withEnvironment[Environment],
+          PureContext.build(V3, fixUnicodeFunctions = true).withEnvironment[Environment],
           CryptoContext.build(com.wavesplatform.lang.Global, V3).withEnvironment[Environment],
           WavesContext.build(
+            Global,
             DirectiveSet(V3, Account, DAppType).explicitGet()
           )
-        ))
+        )
+      )
       .compilerContext
     val expr = {
       val script =
@@ -488,12 +520,14 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
     val ctx = Monoid
       .combineAll(
         Seq(
-          PureContext.build(V3).withEnvironment[Environment],
+          PureContext.build(V3, fixUnicodeFunctions = true).withEnvironment[Environment],
           CryptoContext.build(com.wavesplatform.lang.Global, V3).withEnvironment[Environment],
           WavesContext.build(
+            Global,
             DirectiveSet(V3, Account, DAppType).explicitGet()
           )
-        ))
+        )
+      )
       .compilerContext
     val expr = {
       val script =
@@ -920,8 +954,8 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
       Parser.parseContract(script).get.value
     }
     val ctx =
-      PureContext.build(V4).withEnvironment[Environment] |+|
-      WavesContext.build(DirectiveSet(V4, Account, DAppType).explicitGet())
+      PureContext.build(V4, fixUnicodeFunctions = true).withEnvironment[Environment] |+|
+        WavesContext.build(Global, DirectiveSet(V4, Account, DAppType).explicitGet())
 
     compiler.ContractCompiler(ctx.compilerContext, expr, V4) shouldBe Symbol("right")
   }
@@ -930,12 +964,14 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
     val ctx = Monoid
       .combineAll(
         Seq(
-          PureContext.build(V3).withEnvironment[Environment],
+          PureContext.build(V3, fixUnicodeFunctions = true).withEnvironment[Environment],
           CryptoContext.build(com.wavesplatform.lang.Global, V3).withEnvironment[Environment],
           WavesContext.build(
+            Global,
             DirectiveSet(V3, Account, DAppType).explicitGet()
           )
-        ))
+        )
+      )
       .compilerContext
     val expr = {
       val script =
@@ -967,7 +1003,7 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
 
   property("JS API compile limit exceeding error") {
     val dApp =
-     s"""
+      s"""
         |
         |@Verifier(tx)
         |func verify() =
@@ -975,6 +1011,123 @@ class ContractCompilerTest extends PropSpec with PropertyChecks with Matchers wi
         |
       """.stripMargin
 
-    Global.compileContract(dApp, dAppV4Ctx, V4, ScriptEstimatorV3) should produce("Script is too large: 37551 bytes > 32768 bytes")
+    Global.compileContract(dApp, dAppV4Ctx, V4, ScriptEstimatorV3, false, false) should produce("Script is too large: 37551 bytes > 32768 bytes")
+  }
+
+  property("@Callable Invoke") {
+    val expr = {
+      val script =
+        """
+          | {-# STDLIB_VERSION 5    #-}
+          | {-#CONTENT_TYPE    DAPP #-}
+          |
+          | @Callable(i)
+          | func bar() = {
+          |   ([], "return")
+          | }
+          |
+          | @Callable(i)
+          | func foo(a:ByteVector) = {
+          |  let r = invoke(this, "bar", [], [])
+          |   [
+          |     IntegerEntry("key", 1),
+          |     BooleanEntry("key", true),
+          |     StringEntry("key", "str"),
+          |     BinaryEntry("key", base58''),
+          |     DeleteEntry("key"),
+          |     ScriptTransfer(i.caller, 1, base58''),
+          |     Issue("name", "description", 1000, 4, true, unit, 0),
+          |     Reissue(base58'', 1, false),
+          |     Burn(base58'', 1),
+          |     SponsorFee(base58'', 1)
+          |   ]
+          | }
+        """.stripMargin
+      Parser.parseContract(script).get.value
+    }
+    val ctx =
+      PureContext.build(V5, fixUnicodeFunctions = true).withEnvironment[Environment] |+|
+        WavesContext.build(Global, DirectiveSet(V5, Account, DAppType).explicitGet())
+
+    compiler.ContractCompiler(ctx.compilerContext, expr, V5) shouldBe Symbol("right")
+  }
+
+  property("@Callable Invoke isn't available for V4") {
+    val expr = {
+      val script =
+        """
+          | {-# STDLIB_VERSION 4    #-}
+          | {-#CONTENT_TYPE    DAPP #-}
+          |
+          | @Callable(i)
+          | func bar() = {
+          |   ([], "return")
+          | }
+          |
+          | @Callable(i)
+          | func foo(a:ByteVector) = {
+          |  let r = invoke(this, "bar", [], [])
+          |   [
+          |     IntegerEntry("key", 1),
+          |     BooleanEntry("key", true),
+          |     StringEntry("key", "str"),
+          |     BinaryEntry("key", base58''),
+          |     DeleteEntry("key"),
+          |     ScriptTransfer(i.caller, 1, base58''),
+          |     Issue("name", "description", 1000, 4, true, unit, 0),
+          |     Reissue(base58'', 1, false),
+          |     Burn(base58'', 1),
+          |     SponsorFee(base58'', 1)
+          |   ]
+          | }
+        """.stripMargin
+      Parser.parseContract(script).get.value
+    }
+    val ctx =
+      PureContext.build(V4, fixUnicodeFunctions = true).withEnvironment[Environment] |+|
+        WavesContext.build(Global, DirectiveSet(V4, Account, DAppType).explicitGet())
+
+    compiler.ContractCompiler(ctx.compilerContext, expr, V4) shouldBe Symbol("left")
+  }
+
+  property("originCaller and originCallerPublicKey fields isn't available for V4") {
+    val expr = {
+      val script =
+        """
+          | {-# STDLIB_VERSION 4    #-}
+          | {-#CONTENT_TYPE    DAPP #-}
+          |
+          | @Callable(i)
+          | func foo() = {
+          |   let a = i.originCaller
+          |   let b = i.originCallerPublicKey
+          |   []
+          | }
+        """.stripMargin
+      Parser.parseContract(script).get.value
+    }
+    val ctx =
+      PureContext.build(V4, fixUnicodeFunctions = true).withEnvironment[Environment] |+|
+        WavesContext.build(Global, DirectiveSet(V4, Account, DAppType).explicitGet())
+
+    val result = compiler.ContractCompiler(ctx.compilerContext, expr, V4)
+    result should produce("Undefined field `originCaller` of variable of type `Invocation`")
+    result should produce("Undefined field `originCallerPublicKey` of variable of type `Invocation`")
+  }
+
+  property("matching types error message") {
+    TestCompiler(V4).compile(
+      """
+        |
+        | {-# CONTENT_TYPE DAPP    #-}
+        | {-# SCRIPT_TYPE  ACCOUNT #-}
+        |
+        | @Callable(i)
+        | func call() = {
+        |   let x = assetBalance(this, i.payments[0].assetId)
+        |   []
+        | }
+      """.stripMargin
+    ) should produce("Non-matching types: expected: ByteVector, actual: ByteVector|Unit")
   }
 }

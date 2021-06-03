@@ -3,33 +3,74 @@ package com.wavesplatform.history
 import cats.syntax.option._
 import com.wavesplatform.account.Address
 import com.wavesplatform.api.BlockMeta
-import com.wavesplatform.api.common.{AddressPortfolio, AddressTransactions, CommonBlocksApi}
-import com.wavesplatform.block.{Block, MicroBlock}
+import com.wavesplatform.api.common.CommonTransactionsApi.TransactionMeta
+import com.wavesplatform.api.common.{AddressPortfolio, AddressTransactions, CommonBlocksApi, CommonTransactionsApi}
 import com.wavesplatform.block.Block.BlockId
+import com.wavesplatform.block.{Block, MicroBlock}
 import com.wavesplatform.common.state.ByteStr
 import com.wavesplatform.common.utils.EitherExt2
-import com.wavesplatform.database
+import com.wavesplatform.consensus.PoSSelector
+import com.wavesplatform.consensus.nxt.NxtLikeConsensusBlockData
 import com.wavesplatform.database.{DBExt, Keys, LevelDBWriter}
 import com.wavesplatform.events.BlockchainUpdateTriggers
+import com.wavesplatform.lagonaki.mocks.TestBlock
 import com.wavesplatform.lang.ValidationError
+import com.wavesplatform.settings.WavesSettings
 import com.wavesplatform.state._
-import com.wavesplatform.transaction.{BlockchainUpdater, _}
+import com.wavesplatform.state.diffs.TransactionDiffer
 import com.wavesplatform.transaction.Asset.IssuedAsset
+import com.wavesplatform.transaction.smart.script.trace.TracedResult
+import com.wavesplatform.transaction.{BlockchainUpdater, _}
+import com.wavesplatform.utils.SystemTime
+import com.wavesplatform.utx.UtxPoolImpl
+import com.wavesplatform.wallet.Wallet
+import com.wavesplatform.{Application, database}
+import monix.execution.Scheduler.Implicits.global
+import monix.reactive.Observer
 import org.iq80.leveldb.DB
 
-case class Domain(db: DB, blockchainUpdater: BlockchainUpdaterImpl, levelDBWriter: LevelDBWriter) {
+import scala.concurrent.Future
+import scala.concurrent.duration._
+
+case class Domain(db: DB, blockchainUpdater: BlockchainUpdaterImpl, levelDBWriter: LevelDBWriter, settings: WavesSettings) {
   import Domain._
+
+  val blockchain: BlockchainUpdaterImpl = blockchainUpdater
 
   @volatile
   var triggers: Seq[BlockchainUpdateTriggers] = Nil
 
-  def blockchain: BlockchainUpdaterImpl = blockchainUpdater
+  val posSelector: PoSSelector = PoSSelector(blockchainUpdater, None)
+
+  val transactionDiffer: Transaction => TracedResult[ValidationError, Diff] =
+    TransactionDiffer(blockchain.lastBlockTimestamp, System.currentTimeMillis())(blockchain, _)
+
+  lazy val utxPool = new UtxPoolImpl(SystemTime, blockchain, Observer.empty, settings.utxSettings)
+  lazy val wallet  = Wallet(settings.walletSettings.copy(file = None))
+
+  object commonApi {
+    def invokeScriptResult(transactionId: ByteStr): InvokeScriptResult =
+      transactions.transactionById(transactionId).get.asInstanceOf[TransactionMeta.Invoke].invokeScriptResult.get
+
+    def addressTransactions(address: Address): Seq[Transaction] =
+      transactions.transactionsByAddress(address, None, Set.empty, None).map(_.transaction).toListL.runSyncUnsafe()
+
+    lazy val transactions = CommonTransactionsApi(
+      blockchainUpdater.bestLiquidDiff.map(diff => Height(blockchainUpdater.height) -> diff),
+      db,
+      blockchain,
+      utxPool,
+      wallet,
+      tx => Future.successful(utxPool.putIfNew(tx)),
+      Application.loadBlockAt(db, blockchain)
+    )
+  }
 
   def lastBlock: Block = {
-    blockchainUpdater
-      .liquidBlock(blockchainUpdater.lastBlockId.get)
+    blockchainUpdater.lastBlockId
+      .flatMap(blockchainUpdater.liquidBlock)
       .orElse(levelDBWriter.lastBlock)
-      .get
+      .getOrElse(TestBlock.create(Nil))
   }
 
   def liquidDiff: Diff =
@@ -39,7 +80,7 @@ case class Domain(db: DB, blockchainUpdater: BlockchainUpdaterImpl, levelDBWrite
 
   def appendBlock(b: Block): Seq[Diff] = blockchainUpdater.processBlock(b).explicitGet()
 
-  def removeAfter(blockId: ByteStr): DiscardedBlocks = blockchainUpdater.removeAfter(blockId).explicitGet()
+  def rollbackTo(blockId: ByteStr): DiscardedBlocks = blockchainUpdater.removeAfter(blockId).explicitGet()
 
   def appendMicroBlock(b: MicroBlock): BlockId = blockchainUpdater.processMicroBlock(b).explicitGet()
 
@@ -77,17 +118,28 @@ case class Domain(db: DB, blockchainUpdater: BlockchainUpdaterImpl, levelDBWrite
     lastBlock
   }
 
-  def appendKeyBlock(ref: ByteStr = lastBlockId): Block = {
-    val block = createBlock(Block.NgBlockVersion, Nil, ref)
+  def appendKeyBlock(ref: Option[ByteStr] = None): Block = {
+    val block = createBlock(Block.NgBlockVersion, Nil, ref.orElse(Some(lastBlockId)))
     appendBlock(block)
     lastBlock
   }
 
   def appendMicroBlock(txs: Transaction*): BlockId = {
     val lastBlock = this.lastBlock
-    val block     = lastBlock.copy(transactionData = lastBlock.transactionData ++ txs)
-    val signature = com.wavesplatform.crypto.sign(defaultSigner.privateKey, block.bodyBytes())
-    val mb        = MicroBlock.buildAndSign(lastBlock.header.version, defaultSigner, txs, blockchainUpdater.lastBlockId.get, signature).explicitGet()
+    val block = Block
+      .buildAndSign(
+        lastBlock.header.version,
+        lastBlock.header.timestamp,
+        lastBlock.header.reference,
+        lastBlock.header.baseTarget,
+        lastBlock.header.generationSignature,
+        lastBlock.transactionData ++ txs,
+        defaultSigner,
+        lastBlock.header.featureVotes,
+        lastBlock.header.rewardVote
+      )
+      .explicitGet()
+    val mb = MicroBlock.buildAndSign(lastBlock.header.version, defaultSigner, txs, blockchainUpdater.lastBlockId.get, block.signature).explicitGet()
     blockchainUpdater.processMicroBlock(mb).explicitGet()
   }
 
@@ -96,15 +148,58 @@ case class Domain(db: DB, blockchainUpdater: BlockchainUpdaterImpl, levelDBWrite
     blockchainUpdater.removeAfter(blockId).explicitGet()
   }
 
-  def createBlock(version: Byte, txs: Seq[Transaction], reference: ByteStr = lastBlockId): Block = {
-    val timestamp = System.currentTimeMillis()
+  def rollbackMicros(offset: Int = 1): Unit = {
+    val blockId =
+      blockchainUpdater.microblockIds
+        .drop(offset)
+        .headOption
+        .getOrElse(throw new IllegalStateException("Insufficient count of microblocks"))
+
+    blockchainUpdater.removeAfter(blockId).explicitGet()
+  }
+
+  def createBlock(version: Byte, txs: Seq[Transaction], ref: Option[ByteStr] = blockchainUpdater.lastBlockId, strictTime: Boolean = false): Block = {
+    val reference = ref.getOrElse(randomSig)
+    val parent = ref.flatMap { bs =>
+      val height = blockchain.heightOf(bs)
+      height.flatMap(blockchain.blockHeader).map(_.header)
+    } getOrElse (lastBlock.header)
+
+    val grandParent = ref.flatMap { bs =>
+      val height = blockchain.heightOf(bs)
+      height.flatMap(h => blockchain.blockHeader(h - 2)).map(_.header)
+    }
+
+    val timestamp =
+      if (blockchain.height > 0)
+        parent.timestamp + posSelector
+          .getValidBlockDelay(blockchain.height, defaultSigner, parent.baseTarget, blockchain.balance(defaultSigner.toAddress) max 1e12.toLong)
+          .explicitGet()
+      else
+        System.currentTimeMillis() - (1 hour).toMillis
+
+    val consensus =
+      if (blockchain.height > 0)
+        posSelector
+          .consensusData(
+            defaultSigner,
+            blockchain.height,
+            settings.blockchainSettings.genesisSettings.averageBlockDelay,
+            parent.baseTarget,
+            parent.timestamp,
+            grandParent.map(_.timestamp),
+            timestamp
+          )
+          .explicitGet()
+      else NxtLikeConsensusBlockData(60, generationSignature)
+
     Block
       .buildAndSign(
-        version = version,
-        timestamp = timestamp,
+        version = if (consensus.generationSignature.size == 96) Block.ProtoBlockVersion else version,
+        timestamp = if (strictTime) timestamp else SystemTime.getTimestamp(),
         reference = reference,
-        baseTarget = blockchainUpdater.lastBlockHeader.fold(60L)(_.header.baseTarget),
-        generationSignature = com.wavesplatform.history.correctGenerationSignature(version),
+        baseTarget = consensus.baseTarget,
+        generationSignature = consensus.generationSignature,
         txs = txs,
         featureVotes = Nil,
         rewardVote = -1L,

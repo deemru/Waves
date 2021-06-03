@@ -264,7 +264,7 @@ class BlockchainUpdaterImplSpec
     }
 
     "VRF" in withDomain(
-      domainSettingsWithFeatures(
+      domainSettingsWithPreactivatedFeatures(
         BlockchainFeatures.NG,
         BlockchainFeatures.BlockV5,
         BlockchainFeatures.Ride4DApps
